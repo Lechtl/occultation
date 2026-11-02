@@ -1,0 +1,13 @@
+# Allowlist: the FITS data, stacks and GIF are many GB and stay local
+*
+!.gitignore
+!README.md
+!photometry.py
+!data reduction.ipynb
+!source detection.ipynb
+!stacking and light curve.ipynb
+!gaia_field.csv
+!lightcurve.csv
+!lightcurve_night.png
+!lightcurve_event_cubes.png
+!occultation_search.png
