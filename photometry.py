@@ -7,7 +7,7 @@ from astropy.stats import sigma_clip
 from astropy.wcs import WCS
 from photutils.aperture import CircularAperture
 from photutils.detection import DAOStarFinder
-from scipy.ndimage import gaussian_filter, median_filter
+from scipy.ndimage import gaussian_filter, median_filter, shift
 from scipy.spatial import cKDTree
 from skimage.registration import phase_cross_correlation
 
@@ -185,6 +185,42 @@ def stack_frames(frames, shifts):
         count[good] += 1
     with np.errstate(invalid='ignore', divide='ignore'):
         return total / count * len(frames)
+
+
+def two_source_fit(image, position_1, position_2, psf_position, half_psf=30, radius=25):
+    """
+    Fit two sources with the PSF of a bright star from the same image, at fixed positions.
+    Only the amplitudes are free, and the fit is linear. Bad pixels are left out.
+    Returns the two amplitudes relative to the PSF star and their 1 sigma errors.
+    """
+    ix, iy = int(round(psf_position[0])), int(round(psf_position[1]))
+    psf = image[iy - half_psf:iy + half_psf + 1, ix - half_psf:ix + half_psf + 1]
+    psf = np.nan_to_num(psf, nan=0.0)
+    psf_offset = (psf_position[1] - iy, psf_position[0] - ix)
+
+    x0 = int(min(position_1[0], position_2[0])) - half_psf - 2
+    y0 = int(min(position_1[1], position_2[1])) - half_psf - 2
+    x1 = int(max(position_1[0], position_2[0])) + half_psf + 3
+    y1 = int(max(position_1[1], position_2[1])) + half_psf + 3
+    region = image[y0:y1, x0:x1]
+    yy, xx = np.indices(region.shape)
+
+    templates = []
+    near = np.zeros(region.shape, dtype=bool)
+    for x, y in (position_1, position_2):
+        jx, jy = int(round(x)), int(round(y))
+        moved = shift(psf, (y - jy - psf_offset[0], x - jx - psf_offset[1]), order=1)
+        template = np.zeros(region.shape)
+        template[jy - half_psf - y0:jy + half_psf + 1 - y0, jx - half_psf - x0:jx + half_psf + 1 - x0] = moved
+        templates.append(template)
+        near |= np.hypot(xx - (x - x0), yy - (y - y0)) <= radius
+
+    use = near & np.isfinite(region)
+    design = np.c_[templates[0][use], templates[1][use]]
+    amplitudes = np.linalg.lstsq(design, region[use], rcond=None)[0]
+    variance = np.var(region[use] - design @ amplitudes)
+    errors = np.sqrt(np.diag(variance * np.linalg.inv(design.T @ design)))
+    return amplitudes[0], amplitudes[1], errors[0], errors[1]
 
 
 def solve_field(image, catalog, header, n_stars=60):
